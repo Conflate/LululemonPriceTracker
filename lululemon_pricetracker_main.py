@@ -86,14 +86,13 @@ def get_response(url):
     response = requests.get(url, headers=headers)
     return response.text
 
-# Get html from url
+
 async def fetch_url(session, url):
     async with session.get(url) as response:
         response.raise_for_status()
         html = await response.text()
         return html
 
-# Checks the product URL for any price changes
 async def process_product(session, product):
     url = product["url"]
     logging.info(f"Currently checking: {url}")
@@ -108,10 +107,11 @@ async def process_product(session, product):
                 price_element_string = price_element.text
                 price_element_digits = re.findall(r'\d+', price_element_string)
                 if price_element_digits:
-                    logging.info(f"Product on Sale: {product['Product']} with price: {price_element_digits}")
+
                     price_element_digits_float = [float(digit) for digit in price_element_digits]
                     min_price_found = min(price_element_digits_float)
-
+                    logging.info(
+                        f"Product on Sale: {product['Product']} with price: {price_element_digits} compare with min price: {min_price_found} and status: {product['Status']} and math is: {math.isnan(product['alert_price'])}")
                     # if product is already on sale, compare price
                     if product["Status"] and not math.isnan(product["alert_price"]): #if price is not NaN
                         if min_price_found < float(product["alert_price"]):
@@ -142,7 +142,6 @@ async def process_product(session, product):
 
     return product
 
-# Sends a discord message if there has been any price changes
 async def send_discord_message(product, channel_id):
     try:
         channel = await client.fetch_channel(channel_id)
@@ -153,7 +152,6 @@ async def send_discord_message(product, channel_id):
     return
 
 
-# Sends message in discord channel based on content
 @client.event
 async def on_message(message):
     url = ""
@@ -198,12 +196,12 @@ async def on_message(message):
             await message.channel.send(response)
             logging.info(f"Sending response: {response}")
         elif message.content.startswith('http://') or message.content.startswith('https://'):
-            # Adds URL to CSV file
+            # Add the new URL to the CSV file
             with open('products.csv', 'a') as f:
                 writer = csv.writer(f)
                 writer.writerow([message.content])
 
-            # Sends message to the user confirming that the URL has been added
+            # Send a message to the user confirming that the URL has been added
             await message.channel.send('Thanks for the URL!')
         elif message.content.startswith("!remove"):
             if len(message.content.split(" "))<2:
@@ -224,6 +222,7 @@ async def on_message(message):
         response = requests.get(url)
         soup = BeautifulSoup(response.content, 'html.parser')
         try:
+          #  print("Testing: ", soup.find('h1', {'class': re.compile('OneLinkNoTx.*product-title_title__i8NUw')}).text.strip())
             product_name = soup.find('h1', {'class': 'OneLinkNoTx product-title_title__i8NUw'}).text.strip()
         except Exception as e:
             logging.error(f"Could not find product name, giving it a generic name based on the URL: {e}")
@@ -242,32 +241,34 @@ async def on_message(message):
 async def on_ready():
     logging.info(f"Logged in as {client.user}")
 
-
 async def main():
     await client.wait_until_ready()
+    logging.info("Client is now ready")
 
-    # Set up task queue
+    # Set up the task queue
     queue = asyncio.Queue()
     workers = [asyncio.create_task(process_queue(queue)) for _ in range(5)]
 
     try:
         # Read the list of products from the CSV file
         df = pd.read_csv(PRODUCT_URL_CSV)
-        if (df.empty):
+
+        if df.empty:
             logging.info("CSV FILE IS EMPTY")
         else:
-            # Add each product to task queue
-            for product in df.to_dict("records"):
-                await queue.put(product)
+            # Create an event to signal the URL checking
+            check_event = asyncio.Event()
 
-            scheduler = asyncio.create_task(run_periodically(queue, df))
-            while not queue.empty():
-                await asyncio.gather(*workers, scheduler)
-                await asyncio.sleep(5)
+            # Start the task for periodic URL checking
+            asyncio.create_task(check_urls_periodically(queue, df.to_dict("records")))
+
+            # Start the workers for processing the queue
+            await asyncio.gather(*workers)
 
     except Exception as e:
         logging.error(f"Error occurred in main: {e}")
         traceback.print_exc()
+
 
 
 async def process_queue(queue):
@@ -283,6 +284,9 @@ async def process_queue(queue):
                     if product["alert"]:
 
                         await send_discord_message(product, DISCORD_CHANNEL_ID)
+                        # product["alert"] = False
+                        # product["Status"] = True
+
                         print("Replacing row: ", product)
                         df = pd.read_csv(PRODUCT_URL_CSV)
                         cur_url = product['url']
@@ -292,16 +296,17 @@ async def process_queue(queue):
 
 
             except Exception as e:
+                #logging.error(f"Error processing product name {product['Product']}, product url: {product['url']}: {e}")
                 logging.error(f"Product: {product} with error: {e}")
                 traceback.print_exc()
-                
+            # Mark the task as complete
             queue.task_done()
 
-
-async def run_periodically(queue, products):
-    for product in products:
-        await queue.put(product)
-        await asyncio.sleep(60*20)
+async def check_urls_periodically(queue, products):
+    while True:
+        for product in products:
+            await queue.put(product)
+        await asyncio.sleep(60 * 10)  # Sleep for 10 minutes before checking again
 
 
 loop = asyncio.get_event_loop()
