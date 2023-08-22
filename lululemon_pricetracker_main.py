@@ -101,7 +101,6 @@ async def process_product(session, product):
         soup = BeautifulSoup(html, "html.parser")
         on_sale_check = re.search('<span class="pill-2i_OA product-description_pdpTitlePill__127xe pillSecondary-2s4zo">.*?</span>', html)
         if on_sale_check:
-            logging.info(f"Product MIGHT be on sale: {url}")
             try:
                 price_element = soup.find('span', {'class': 'price-1jnQj price'}).find_all('span')[1]
                 price_element_string = price_element.text
@@ -117,9 +116,6 @@ async def process_product(session, product):
                         if min_price_found < float(product["alert_price"]):
                             product["alert_price"] = min_price_found
                             product["alert"] = True
-                            # df = pd.read.csv(PRODUCT_URL_CSV)
-                            # rows_to_edit = df[df['url'] == url]
-                            # rows_to_edit.loc[:, 'alert_price'] = min_price_found
                         else:
                             logging.info("Product on sale but no further price reductions")
                             product["alert"] = False
